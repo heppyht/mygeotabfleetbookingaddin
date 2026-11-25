@@ -49,12 +49,48 @@
     });
   }
 
-  function hasVehicleConflict(bookings, deviceId, startUtc, endUtc) {
-    return hasConflict(bookings, deviceId, startUtc, endUtc, 'deviceId');
+  function hasVehicleConflict(bookings, vehicleId, startUtc, endUtc) {
+    var requestedStart = Date.parse(startUtc);
+    var requestedEnd = Date.parse(endUtc);
+    if (!Number.isFinite(requestedStart) || !Number.isFinite(requestedEnd) || requestedStart >= requestedEnd) {
+      throw new Error('Invalid booking time range.');
+    }
+
+    return bookings.some(function (booking) {
+      var details = booking.details || {};
+      if (details.status !== 'confirmed') return false;
+      if (details.deviceId !== vehicleId && details.assignedVehicleId !== vehicleId) return false;
+
+      var existingStart = Date.parse(details.startUtc);
+      var existingEnd = Date.parse(details.endUtc);
+      if (!Number.isFinite(existingStart) || !Number.isFinite(existingEnd) || existingStart >= existingEnd) {
+        throw new Error('Stored booking time data is invalid for vehicle ' + vehicleId + '.');
+      }
+
+      return requestedStart < existingEnd && requestedEnd > existingStart;
+    });
   }
 
   function hasDriverConflict(bookings, driverId, startUtc, endUtc) {
-    return hasConflict(bookings, driverId, startUtc, endUtc, 'driverId');
+    var requestedStart = Date.parse(startUtc);
+    var requestedEnd = Date.parse(endUtc);
+    if (!Number.isFinite(requestedStart) || !Number.isFinite(requestedEnd) || requestedStart >= requestedEnd) {
+      throw new Error('Invalid booking time range.');
+    }
+
+    return bookings.some(function (booking) {
+      var details = booking.details || {};
+      if (details.status !== 'confirmed') return false;
+      if (details.assignedDriverId !== driverId) return false;
+
+      var existingStart = Date.parse(details.startUtc);
+      var existingEnd = Date.parse(details.endUtc);
+      if (!Number.isFinite(existingStart) || !Number.isFinite(existingEnd) || existingStart >= existingEnd) {
+        throw new Error('Stored booking time data is invalid for driver ' + driverId + '.');
+      }
+
+      return requestedStart < existingEnd && requestedEnd > existingStart;
+    });
   }
 
   function canApproveBooking(booking) {

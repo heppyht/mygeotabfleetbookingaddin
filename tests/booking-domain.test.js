@@ -39,12 +39,12 @@ test('detects overlapping confirmed bookings for the same vehicle only', () => {
   assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-2', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
 });
 
-test('detects overlapping driver conflicts', () => {
+test('detects overlapping driver conflicts using assignedDriverId', () => {
   const bookings = [
     {
       details: {
         deviceId: 'vehicle-1',
-        driverId: 'driver-1',
+        assignedDriverId: 'driver-1',
         status: 'confirmed',
         startUtc: '2026-11-12T08:00:00.000Z',
         endUtc: '2026-11-12T10:00:00.000Z'
@@ -55,6 +55,130 @@ test('detects overlapping driver conflicts', () => {
   assert.equal(domain.hasDriverConflict(bookings, 'driver-1', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), true);
   assert.equal(domain.hasDriverConflict(bookings, 'driver-2', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
   assert.equal(domain.hasDriverConflict(bookings, 'driver-1', '2026-11-12T10:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
+});
+
+test('detects vehicle conflict with assignedVehicleId (new bookings)', () => {
+  const bookings = [
+    {
+      details: {
+        assignedVehicleId: 'vehicle-1',
+        status: 'confirmed',
+        startUtc: '2026-11-12T08:00:00.000Z',
+        endUtc: '2026-11-12T10:00:00.000Z'
+      }
+    }
+  ];
+
+  assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-1', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), true);
+  assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-2', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
+});
+
+test('detects vehicle conflict with legacy deviceId (existing bookings)', () => {
+  const bookings = [
+    {
+      details: {
+        deviceId: 'vehicle-1',
+        status: 'confirmed',
+        startUtc: '2026-11-12T08:00:00.000Z',
+        endUtc: '2026-11-12T10:00:00.000Z'
+      }
+    }
+  ];
+
+  assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-1', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), true);
+  assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-2', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
+});
+
+test('allows adjacent bookings for same vehicle', () => {
+  const bookings = [
+    {
+      details: {
+        assignedVehicleId: 'vehicle-1',
+        status: 'confirmed',
+        startUtc: '2026-11-12T08:00:00.000Z',
+        endUtc: '2026-11-12T09:00:00.000Z'
+      }
+    }
+  ];
+
+  assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-1', '2026-11-12T09:00:00.000Z', '2026-11-12T10:00:00.000Z'), false);
+});
+
+test('allows adjacent bookings for same driver', () => {
+  const bookings = [
+    {
+      details: {
+        assignedDriverId: 'driver-1',
+        status: 'confirmed',
+        startUtc: '2026-11-12T08:00:00.000Z',
+        endUtc: '2026-11-12T09:00:00.000Z'
+      }
+    }
+  ];
+
+  assert.equal(domain.hasDriverConflict(bookings, 'driver-1', '2026-11-12T09:00:00.000Z', '2026-11-12T10:00:00.000Z'), false);
+});
+
+test('allows non-overlapping bookings for same vehicle', () => {
+  const bookings = [
+    {
+      details: {
+        assignedVehicleId: 'vehicle-1',
+        status: 'confirmed',
+        startUtc: '2026-11-12T08:00:00.000Z',
+        endUtc: '2026-11-12T09:00:00.000Z'
+      }
+    }
+  ];
+
+  assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-1', '2026-11-12T10:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
+  assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-1', '2026-11-12T07:00:00.000Z', '2026-11-12T08:00:00.000Z'), false);
+});
+
+test('allows non-overlapping bookings for same driver', () => {
+  const bookings = [
+    {
+      details: {
+        assignedDriverId: 'driver-1',
+        status: 'confirmed',
+        startUtc: '2026-11-12T08:00:00.000Z',
+        endUtc: '2026-11-12T09:00:00.000Z'
+      }
+    }
+  ];
+
+  assert.equal(domain.hasDriverConflict(bookings, 'driver-1', '2026-11-12T10:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
+  assert.equal(domain.hasDriverConflict(bookings, 'driver-1', '2026-11-12T07:00:00.000Z', '2026-11-12T08:00:00.000Z'), false);
+});
+
+test('ignores cancelled bookings for vehicle conflict', () => {
+  const bookings = [
+    {
+      details: {
+        assignedVehicleId: 'vehicle-1',
+        status: 'cancelled',
+        startUtc: '2026-11-12T08:00:00.000Z',
+        endUtc: '2026-11-12T10:00:00.000Z'
+      }
+    }
+  ];
+
+  assert.equal(domain.hasVehicleConflict(bookings, 'vehicle-1', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
+});
+
+test('ignores cancelled bookings for driver conflict', () => {
+  const bookings = [
+    {
+      details: {
+        assignedDriverId: 'driver-1',
+        status: 'cancelled',
+        startUtc: '2026-11-12T08:00:00.000Z',
+        endUtc: '2026-11-12T10:00:00.000Z'
+      }
+    }
+  ];
+
+  assert.equal(domain.hasDriverConflict(bookings, 'driver-1', '2026-11-12T09:00:00.000Z', '2026-11-12T11:00:00.000Z'), false);
 });
 
 test('canApproveBooking requires both vehicle and driver assigned', () => {
