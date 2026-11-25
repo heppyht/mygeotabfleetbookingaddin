@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'none'
+
+      - name: Verify required Add-In configuration files exist
+        run: |
+          test -f configuration.json || { echo "ERROR: configuration.json is missing"; exit 1; }
+          test -f fleet-summary.html || { echo "ERROR: fleet-summary.html is missing"; exit 1; }
+          test -f booking-domain.js || { echo "ERROR: booking-domain.js is missing"; exit 1; }
+          test -f booking.css || { echo "ERROR: booking.css is missing"; exit 1; }
+          echo "All required Add-In configuration files are present."
+
+      - name: Validate JavaScript syntax
+        run: |
+          for file in booking-domain.js fleet-summary.html; do
+            if [[ "$file" == *.js ]]; then
+              node --check "$file" || { echo "ERROR: Syntax error in $file"; exit 1; }
+            fi
+          done
+          echo "JavaScript syntax validation passed."
+
+      - name: Check for whitespace errors
+        run: |
+          git diff --check || { echo "ERROR: Whitespace errors detected"; exit 1; }
+          echo "No whitespace errors found."
+
+      - name: Run booking domain tests
+        run: |
+          node --test tests/booking-domain.test.js || { echo "ERROR: Tests failed"; exit 1; }
+          echo "All booking domain tests passed."
