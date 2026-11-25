@@ -50,12 +50,6 @@
                 </div>
               </div>
               <form id="bookingForm" class="booking-form">
-                <div class="field field-wide">
-                  <label for="deviceId">Vehicle</label>
-                  <select id="deviceId" name="deviceId" required disabled>
-                    <option value="">Loading vehicles...</option>
-                  </select>
-                </div>
                 <div class="field">
                   <label for="startLocal">Start</label>
                   <input id="startLocal" name="startLocal" type="datetime-local" required disabled>
@@ -68,8 +62,12 @@
                   <label for="purpose">Purpose <span class="optional">(optional)</span></label>
                   <input id="purpose" name="purpose" type="text" maxlength="160" placeholder="e.g. customer visit" disabled>
                 </div>
+                <div class="field field-wide">
+                  <label for="notes">Additional notes <span class="optional">(optional)</span></label>
+                  <textarea id="notes" name="notes" maxlength="500" placeholder="Any additional information for the administrator" disabled></textarea>
+                </div>
                 <div class="field-wide form-actions">
-                  <button id="submitButton" type="submit" disabled>Create booking</button>
+                  <button id="submitButton" type="submit" disabled>Submit booking request</button>
                   <button id="cancelEditButton" class="secondary" type="button" hidden>Cancel changes</button>
                 </div>
               </form>
@@ -98,17 +96,60 @@
             <div>
               <p class="eyebrow">REVIEW</p>
               <h2 id="approvalPageTitle">Approval</h2>
-              <p class="page-description">A place to review bookings that may require attention.</p>
+              <p class="page-description">Review and approve pending booking requests. Assign vehicles and drivers from MyGeotab records.</p>
             </div>
           </div>
-          <div class="panel">
+          <div id="approvalStatus" class="status" role="status" aria-live="polite"></div>
+
+          <div class="panel" aria-labelledby="pendingTitle">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">REVIEW QUEUE</p>
-                <h3>Bookings to review</h3>
+                <p class="eyebrow">PENDING REQUESTS</p>
+                <h3 id="pendingTitle">Booking requests awaiting approval</h3>
               </div>
             </div>
-            <p class="empty">This is a visual placeholder. No approval workflow has been implemented.</p>
+            <div id="pendingList" class="booking-list">
+              <p class="empty">Loading pending requests...</p>
+            </div>
+          </div>
+
+          <div id="approvalDetailPanel" class="panel" hidden aria-labelledby="approvalDetailTitle">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">APPROVAL ACTION</p>
+                <h3 id="approvalDetailTitle">Assign vehicle and driver</h3>
+              </div>
+            </div>
+            <form id="approvalForm" class="approval-form">
+              <input type="hidden" id="approvalBookingId" name="bookingId">
+              <div class="approval-request-info" id="approvalRequestInfo"></div>
+
+              <div class="field field-wide">
+                <label for="approvalVehicle">Vehicle <span class="required">*</span></label>
+                <select id="approvalVehicle" name="vehicleId" required>
+                  <option value="">Select a vehicle</option>
+                </select>
+              </div>
+
+              <div class="field field-wide">
+                <label for="approvalDriver">Driver <span class="required">*</span></label>
+                <select id="approvalDriver" name="driverId" required>
+                  <option value="">Select a driver</option>
+                </select>
+              </div>
+
+              <div class="field field-wide">
+                <label for="approvalNotes">Administrator notes <span class="optional">(optional)</span></label>
+                <textarea id="approvalNotes" name="approvalNotes" maxlength="500" placeholder="Internal notes for this approval"></textarea>
+              </div>
+
+              <div class="field-wide form-actions">
+                <button id="approveButton" type="submit" class="primary">Approve booking</button>
+                <button id="rejectButton" type="button" class="danger">Reject booking</button>
+                <button id="cancelApprovalButton" class="secondary" type="button">Cancel</button>
+              </div>
+              <p id="approvalMessage" class="filter-message" role="alert" hidden></p>
+            </form>
           </div>
         </section>
 
@@ -207,7 +248,9 @@
                 <select id="reportStatus" name="status">
                   <option value="all">All statuses</option>
                   <option value="confirmed">Confirmed</option>
+                  <option value="pending">Pending Approval</option>
                   <option value="cancelled">Cancelled</option>
+                  <option value="rejected">Rejected</option>
                   <option value="unknown">Unknown</option>
                 </select>
               </div>
@@ -312,10 +355,10 @@
 
       var domain = window.VehicleBookingDomain;
       var form = document.getElementById('bookingForm');
-      var deviceSelect = document.getElementById('deviceId');
       var startInput = document.getElementById('startLocal');
       var endInput = document.getElementById('endLocal');
       var purposeInput = document.getElementById('purpose');
+      var notesInput = document.getElementById('notes');
       var submitButton = document.getElementById('submitButton');
       var cancelEditButton = document.getElementById('cancelEditButton');
       var statusElement = document.getElementById('status');
@@ -339,6 +382,19 @@
       var userSearch = document.getElementById('userSearch');
       var userStatusFilter = document.getElementById('userStatusFilter');
       var userListBody = document.getElementById('userListBody');
+      var approvalStatus = document.getElementById('approvalStatus');
+      var pendingList = document.getElementById('pendingList');
+      var approvalDetailPanel = document.getElementById('approvalDetailPanel');
+      var approvalForm = document.getElementById('approvalForm');
+      var approvalBookingId = document.getElementById('approvalBookingId');
+      var approvalVehicle = document.getElementById('approvalVehicle');
+      var approvalDriver = document.getElementById('approvalDriver');
+      var approvalNotes = document.getElementById('approvalNotes');
+      var approveButton = document.getElementById('approveButton');
+      var rejectButton = document.getElementById('rejectButton');
+      var cancelApprovalButton = document.getElementById('cancelApprovalButton');
+      var approvalMessage = document.getElementById('approvalMessage');
+      var approvalRequestInfo = document.getElementById('approvalRequestInfo');
       var reportPage = 0;
       var reportPageSize = 25;
       var appliedReportFilters = {
@@ -349,6 +405,7 @@
         requester: ''
       };
       var currentApi = null;
+      var currentUser = null;
       var currentUserName = '';
       var currentDevices = [];
       var currentBookings = [];
@@ -360,9 +417,12 @@
       var activePage = 'booking';
       var canBook = false;
       var isBusy = false;
+      var isAdmin = false;
       var editingRecordId = null;
       var loadSequence = 0;
       var listenersBound = false;
+      var approvalLoadSequence = 0;
+      var selectedPendingBookingId = null;
 
       function apiCall(api, method, parameters) {
         return new Promise(function (resolve, reject) {
@@ -373,7 +433,9 @@
       function getSession(api) {
         return new Promise(function (resolve, reject) {
           try {
-            api.getSession(resolve);
+            api.getSession(function (session) {
+              resolve(session);
+            });
           } catch (error) {
             reject(error);
           }
@@ -416,10 +478,10 @@
 
       function updateFormState() {
         var formEnabled = canBook && !isBusy;
-        deviceSelect.disabled = !formEnabled;
         startInput.disabled = !formEnabled;
         endInput.disabled = !formEnabled;
         purposeInput.disabled = !formEnabled;
+        notesInput.disabled = !formEnabled;
         submitButton.disabled = !formEnabled;
         cancelEditButton.disabled = isBusy;
       }
@@ -470,6 +532,290 @@
         };
       }
 
+      function getEligibleDrivers() {
+        return currentUsers.filter(function (user) {
+          return user.isDriver && getUserStatus(user) === 'Active';
+        });
+      }
+
+      function renderApprovalVehicleOptions(selectedVehicleId) {
+        var availableDevices = currentDevices.filter(isDeviceActive);
+        approvalVehicle.textContent = '';
+        var placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = availableDevices.length ? 'Select a vehicle' : 'No active vehicles available';
+        approvalVehicle.appendChild(placeholder);
+
+        availableDevices.forEach(function (device) {
+          var option = document.createElement('option');
+          option.value = device.id;
+          option.textContent = device.name || device.id;
+          approvalVehicle.appendChild(option);
+        });
+        if (selectedVehicleId) {
+          approvalVehicle.value = selectedVehicleId;
+        }
+      }
+
+      function renderApprovalDriverOptions(selectedDriverId) {
+        var eligibleDrivers = getEligibleDrivers();
+        approvalDriver.textContent = '';
+        var placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = eligibleDrivers.length ? 'Select a driver' : 'No eligible drivers available';
+        approvalDriver.appendChild(placeholder);
+
+        eligibleDrivers.forEach(function (user) {
+          var option = document.createElement('option');
+          option.value = user.id;
+          option.textContent = getUserFullName(user) + ' (' + user.login + ')';
+          approvalDriver.appendChild(option);
+        });
+        if (selectedDriverId) {
+          approvalDriver.value = selectedDriverId;
+        }
+      }
+
+      function getPendingBookings() {
+        return currentBookings.filter(function (record) {
+          return record.details.status === 'pending';
+        }).sort(function (first, second) {
+          return new Date(first.details.startUtc).getTime() - new Date(second.details.startUtc).getTime();
+        });
+      }
+
+      function renderPendingBookings() {
+        var pendingBookings = getPendingBookings();
+        pendingList.textContent = '';
+
+        if (!isAdmin) {
+          var noAccess = document.createElement('p');
+          noAccess.className = 'empty';
+          noAccess.textContent = 'You do not have administrator permissions to approve bookings.';
+          pendingList.appendChild(noAccess);
+          return;
+        }
+
+        if (pendingBookings.length === 0) {
+          var empty = document.createElement('p');
+          empty.className = 'empty';
+          empty.textContent = 'No pending booking requests.';
+          pendingList.appendChild(empty);
+          return;
+        }
+
+        pendingBookings.forEach(function (record) {
+          var details = record.details;
+          var card = document.createElement('article');
+          card.className = 'booking pending-booking';
+          card.setAttribute('data-booking-id', record.id);
+
+          var content = document.createElement('div');
+          content.className = 'booking-details';
+          var title = document.createElement('p');
+          title.className = 'booking-title';
+          title.textContent = 'Booking Request — Pending Approval';
+          var metadata = document.createElement('p');
+          metadata.className = 'booking-meta';
+          metadata.textContent = formatDate(details.startUtc) + ' – ' + formatDate(details.endUtc) +
+            ' | Requested by: ' + (details.createdBy || 'Unknown') +
+            (details.purpose ? ' | Purpose: ' + details.purpose : '') +
+            (details.notes ? ' | Notes: ' + details.notes : '');
+          content.appendChild(title);
+          content.appendChild(metadata);
+          card.appendChild(content);
+
+          var actions = document.createElement('div');
+          actions.className = 'booking-actions';
+          var reviewButton = document.createElement('button');
+          reviewButton.type = 'button';
+          reviewButton.className = 'primary';
+          reviewButton.textContent = 'Review & Assign';
+          reviewButton.setAttribute('data-review-id', record.id);
+          actions.appendChild(reviewButton);
+          card.appendChild(actions);
+
+          pendingList.appendChild(card);
+        });
+      }
+
+      function showApprovalDetail(bookingId) {
+        var record = currentBookings.find(function (r) { return String(r.id) === String(bookingId); });
+        if (!record) return;
+
+        selectedPendingBookingId = bookingId;
+        var details = record.details;
+
+        approvalBookingId.value = bookingId;
+        approvalRequestInfo.innerHTML = '<strong>Requester:</strong> ' + (details.createdBy || 'Unknown') +
+          '<br><strong>Requested:</strong> ' + formatDate(details.createdAtUtc) +
+          '<br><strong>Period:</strong> ' + formatDate(details.startUtc) + ' – ' + formatDate(details.endUtc) +
+          (details.purpose ? '<br><strong>Purpose:</strong> ' + details.purpose : '') +
+          (details.notes ? '<br><strong>Notes:</strong> ' + details.notes : '');
+
+        renderApprovalVehicleOptions(details.assignedVehicleId || '');
+        renderApprovalDriverOptions(details.assignedDriverId || '');
+        approvalNotes.value = details.approvalNotes || '';
+        approvalMessage.textContent = '';
+        approvalMessage.hidden = true;
+
+        approvalDetailPanel.hidden = false;
+        approvalDetailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      function hideApprovalDetail() {
+        approvalDetailPanel.hidden = true;
+        selectedPendingBookingId = null;
+        approvalForm.reset();
+        approvalRequestInfo.textContent = '';
+      }
+
+      function setApprovalMessage(message, isError) {
+        approvalMessage.textContent = message;
+        approvalMessage.hidden = false;
+        approvalMessage.setAttribute('data-error', isError ? 'true' : 'false');
+      }
+
+      async function approveBooking(event) {
+        event.preventDefault();
+        if (isBusy || !selectedPendingBookingId) return;
+
+        if (!domain.isAdminUser(currentUser)) {
+          setApprovalMessage('Only authorized administrators can approve bookings.', true);
+          return;
+        }
+
+        var vehicleId = approvalVehicle.value;
+        var driverId = approvalDriver.value;
+        if (!vehicleId) {
+          setApprovalMessage('Please select a vehicle.', true);
+          return;
+        }
+        if (!driverId) {
+          setApprovalMessage('Please select a driver.', true);
+          return;
+        }
+
+        setBusy(true);
+        try {
+          var freshRecords = normalizeRecords(await getBookingRecords(currentApi));
+          var record = freshRecords.find(function (r) { return String(r.id) === String(selectedPendingBookingId); });
+          if (!record || record.details.status !== 'pending') {
+            throw new Error('Booking request not found or already processed. Reload and try again.');
+          }
+
+          var details = record.details;
+          var startUtc = details.startUtc;
+          var endUtc = details.endUtc;
+
+          if (domain.hasVehicleConflict(freshRecords, vehicleId, startUtc, endUtc)) {
+            throw new Error('Selected vehicle is already booked during this time period.');
+          }
+          if (domain.hasDriverConflict(freshRecords, driverId, startUtc, endUtc)) {
+            throw new Error('Selected driver is already assigned to another booking during this time period.');
+          }
+
+          var vehicle = currentDevices.find(function (d) { return d.id === vehicleId; });
+          var driver = currentUsers.find(function (u) { return u.id === driverId; });
+
+          var now = new Date().toISOString();
+          var updatedDetails = Object.assign({}, details, {
+            status: 'confirmed',
+            assignedVehicleId: vehicleId,
+            assignedVehicleName: vehicle ? vehicle.name : vehicleId,
+            assignedDriverId: driverId,
+            assignedDriverName: driver ? getUserFullName(driver) : driverId,
+            approvedBy: currentUserName,
+            approvedAt: now,
+            approvalNotes: approvalNotes.value.trim(),
+            updatedAtUtc: now
+          });
+
+          domain.validateApprovalFields(updatedDetails);
+
+          await apiCall(currentApi, 'Set', {
+            typeName: 'AddInData',
+            entity: {
+              addInId: ADDIN_ID,
+              id: record.id,
+              groups: record.groups,
+              details: updatedDetails
+            }
+          });
+
+          var updatedRecords = await refresh(currentApi, true);
+          hideApprovalDetail();
+          if (!updatedRecords) {
+            setStatus('Booking approved, but the list could not be refreshed. Reload the add-in to verify.', true);
+            return;
+          }
+          setStatus('Booking approved successfully.', false);
+          setApprovalMessage('', false);
+        } catch (error) {
+          setApprovalMessage('Unable to approve booking: ' + errorText(error), true);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function rejectBooking() {
+        if (isBusy || !selectedPendingBookingId) return;
+
+        if (!domain.isAdminUser(currentUser)) {
+          setApprovalMessage('Only authorized administrators can reject bookings.', true);
+          return;
+        }
+
+        if (!window.confirm('Reject this booking request? This action cannot be undone.')) return;
+
+        var rejectionReason = approvalNotes.value.trim();
+        if (!rejectionReason) {
+          setApprovalMessage('Rejection reason is required.', true);
+          return;
+        }
+
+        setBusy(true);
+        try {
+          var freshRecords = normalizeRecords(await getBookingRecords(currentApi));
+          var record = freshRecords.find(function (r) { return String(r.id) === String(selectedPendingBookingId); });
+          if (!record || record.details.status !== 'pending') {
+            throw new Error('Booking request not found or already processed. Reload and try again.');
+          }
+
+          var details = record.details;
+          var now = new Date().toISOString();
+          var updatedDetails = Object.assign({}, details, {
+            status: 'rejected',
+            rejectedBy: currentUserName,
+            rejectedAt: now,
+            rejectionReason: rejectionReason,
+            updatedAtUtc: now
+          });
+
+          await apiCall(currentApi, 'Set', {
+            typeName: 'AddInData',
+            entity: {
+              addInId: ADDIN_ID,
+              id: record.id,
+              groups: record.groups,
+              details: updatedDetails
+            }
+          });
+
+          var updatedRecords = await refresh(currentApi, true);
+          hideApprovalDetail();
+          if (!updatedRecords) {
+            setStatus('Booking rejected, but the list could not be refreshed. Reload the add-in to verify.', true);
+            return;
+          }
+          setStatus('Booking request rejected.', false);
+        } catch (error) {
+          setStatus('Unable to reject booking: ' + errorText(error), true);
+        } finally {
+          setBusy(false);
+        }
+      }
+
       function getBookingRecords(api) {
         return apiCall(api, 'Get', {
           typeName: 'AddInData',
@@ -506,6 +852,8 @@
       function getReportStatus(details) {
         if (details.status === 'confirmed') return 'Confirmed';
         if (details.status === 'cancelled') return 'Cancelled';
+        if (details.status === 'pending') return 'Pending Approval';
+        if (details.status === 'rejected') return 'Rejected';
         return 'Unknown';
       }
 
@@ -879,17 +1227,26 @@
           var card = document.createElement('article');
           card.className = 'booking';
 
+          var statusLabel = '';
+          if (details.status === 'confirmed') statusLabel = 'Confirmed';
+          else if (details.status === 'cancelled') statusLabel = 'Cancelled';
+          else if (details.status === 'pending') statusLabel = 'Pending Approval';
+          else if (details.status === 'rejected') statusLabel = 'Rejected';
+          else statusLabel = 'Unknown';
+
           var content = document.createElement('div');
           content.className = 'booking-details';
           var title = document.createElement('p');
           title.className = 'booking-title';
-          title.textContent = (device ? device.name : details.deviceName || details.deviceId) +
-            ' — ' + (details.status === 'cancelled' ? 'Cancelled' : 'Confirmed');
+          var vehicleName = device ? device.name : (details.assignedVehicleName || details.deviceName || details.deviceId);
+          title.textContent = vehicleName + ' — ' + statusLabel;
           var metadata = document.createElement('p');
           metadata.className = 'booking-meta';
           metadata.textContent = formatDate(details.startUtc) + ' – ' + formatDate(details.endUtc) +
             ' | Booked by: ' + (details.createdBy || 'Unknown') +
-            (details.purpose ? ' | Purpose: ' + details.purpose : '');
+            (details.purpose ? ' | Purpose: ' + details.purpose : '') +
+            (details.notes ? ' | Notes: ' + details.notes : '') +
+            (details.assignedDriverName ? ' | Driver: ' + details.assignedDriverName : '');
           content.appendChild(title);
           content.appendChild(metadata);
           card.appendChild(content);
@@ -912,6 +1269,13 @@
             cancelButton.textContent = 'Cancel';
             cancelButton.setAttribute('data-cancel-id', record.id);
             actions.appendChild(cancelButton);
+          } else if (details.status === 'pending' && isOwner) {
+            var cancelPendingButton = document.createElement('button');
+            cancelPendingButton.type = 'button';
+            cancelPendingButton.className = 'danger';
+            cancelPendingButton.textContent = 'Withdraw Request';
+            cancelPendingButton.setAttribute('data-cancel-id', record.id);
+            actions.appendChild(cancelPendingButton);
           }
           if (actions.childNodes.length) card.appendChild(actions);
           bookingList.appendChild(card);
@@ -935,7 +1299,9 @@
             return device && device.id;
           });
           currentBookings = normalizeRecords(results[1]);
+          currentUser = results[2];
           currentUserName = results[2].userName || '';
+          isAdmin = domain.isAdminUser(currentUser);
           renderDeviceInventory(currentDevices);
           renderBookings();
           renderReportVehicleOptions();
@@ -954,6 +1320,18 @@
               (configuration.availableCount === 1 ? ' active vehicle is' : ' active vehicles are') +
               ' available for booking.', false);
           }
+
+          if (activePage === 'approval') {
+            renderPendingBookings();
+            if (isAdmin) {
+              approvalStatus.textContent = 'Loaded ' + getPendingBookings().length + ' pending request(s).';
+              approvalStatus.setAttribute('data-error', 'false');
+            } else {
+              approvalStatus.textContent = 'Administrator access required to approve bookings.';
+              approvalStatus.setAttribute('data-error', 'true');
+            }
+          }
+
           return currentBookings.slice();
         } catch (error) {
           if (sequence === loadSequence) {
@@ -1006,36 +1384,30 @@
         setBusy(true);
         try {
           var interval = domain.toUtcInterval(startInput.value, endInput.value);
-          var device = currentDevices.find(function (item) { return item.id === deviceSelect.value; });
-          if (!device || !isDeviceActive(device)) throw new Error('Select a valid active vehicle.');
 
           var freshRecords = normalizeRecords(await getBookingRecords(currentApi));
           var recordsForConflictCheck = freshRecords.filter(function (record) {
             return String(record.id) !== String(editingRecordId);
           });
-          if (domain.hasConflict(recordsForConflictCheck, device.id, interval.startUtc, interval.endUtc)) {
-            throw new Error('This vehicle already has an active booking during that time.');
-          }
 
           var existingRecord = editingRecordId ? freshRecords.find(function (record) {
             return String(record.id) === String(editingRecordId);
           }) : null;
-          if (editingRecordId && (!existingRecord || existingRecord.details.status !== 'confirmed')) {
-            throw new Error('Booking not found or it has changed. Reload the list and try again.');
+          if (editingRecordId && (!existingRecord || existingRecord.details.status !== 'pending')) {
+            throw new Error('Booking request not found or it has changed. Reload the list and try again.');
           }
           if (existingRecord &&
               String(existingRecord.details.createdBy || '').toLowerCase() !== currentUserName.toLowerCase()) {
-            throw new Error('Only the booking owner can edit this booking.');
+            throw new Error('Only the request owner can edit this booking request.');
           }
           var now = new Date().toISOString();
           var details = Object.assign({}, existingRecord ? existingRecord.details : {}, {
             bookingKey: existingRecord ? existingRecord.details.bookingKey : createBookingKey(),
-            deviceId: device.id,
-            deviceName: device.name || device.id,
             startUtc: interval.startUtc,
             endUtc: interval.endUtc,
-            status: 'confirmed',
+            status: 'pending',
             purpose: purposeInput.value.trim(),
+            notes: notesInput.value.trim(),
             createdBy: existingRecord ? existingRecord.details.createdBy : currentUserName,
             createdAtUtc: existingRecord ? existingRecord.details.createdAtUtc : now,
             updatedAtUtc: now
@@ -1063,23 +1435,13 @@
           var updatedRecords = await refresh(currentApi, true);
           resetForm();
           if (!updatedRecords) {
-            setStatus('Booking saved, but the list could not be refreshed. Reload the add-in to verify.', true);
+            setStatus('Booking request submitted, but the list could not be refreshed. Reload the add-in to verify.', true);
             return;
           }
 
-          var concurrentConflict = domain.hasConflict(
-            updatedRecords.filter(function (record) { return String(record.id) !== String(recordId); }),
-            device.id,
-            interval.startUtc,
-            interval.endUtc
-          );
-          if (concurrentConflict) {
-            setStatus('Booking saved, but another booking was detected for the same time slot. Contact an administrator to resolve the conflict.', true);
-          } else {
-            setStatus(existingRecord ? 'Booking changes saved.' : 'Booking created successfully.', false);
-          }
+          setStatus(existingRecord ? 'Booking request updated.' : 'Booking request submitted for approval.', false);
         } catch (error) {
-          setStatus('Unable to save booking: ' + errorText(error), true);
+          setStatus('Unable to submit booking request: ' + errorText(error), true);
         } finally {
           setBusy(false);
         }
@@ -1091,15 +1453,16 @@
         try {
           var freshRecords = normalizeRecords(await getBookingRecords(currentApi));
           var record = freshRecords.find(function (item) { return String(item.id) === String(id); });
-          if (!record || record.details.status !== 'confirmed') {
-            throw new Error('Booking not found or it has already been cancelled. Reload the list and try again.');
+          if (!record || (record.details.status !== 'confirmed' && record.details.status !== 'pending')) {
+            throw new Error('Booking not found or it has already been cancelled/processed. Reload the list and try again.');
           }
           if (String(record.details.createdBy || '').toLowerCase() !== currentUserName.toLowerCase()) {
             throw new Error('Only the booking owner can cancel this booking.');
           }
 
+          var newStatus = record.details.status === 'pending' ? 'cancelled' : 'cancelled';
           var details = Object.assign({}, record.details, {
-            status: 'cancelled',
+            status: newStatus,
             cancelledAtUtc: new Date().toISOString(),
             updatedAtUtc: new Date().toISOString()
           });
@@ -1159,6 +1522,9 @@
             else item.removeAttribute('aria-current');
           });
           if (activePage === 'users') loadUsers(currentApi, false);
+          if (activePage === 'approval') {
+            if (currentApi) refresh(currentApi, false);
+          }
         });
         bookingList.addEventListener('click', function (event) {
           var editButton = event.target.closest('[data-edit-id]');
@@ -1166,6 +1532,13 @@
           if (editButton) beginEdit(editButton.getAttribute('data-edit-id'));
           if (cancelButton) cancelBooking(cancelButton.getAttribute('data-cancel-id'));
         });
+        pendingList.addEventListener('click', function (event) {
+          var reviewButton = event.target.closest('[data-review-id]');
+          if (reviewButton) showApprovalDetail(reviewButton.getAttribute('data-review-id'));
+        });
+        approvalForm.addEventListener('submit', approveBooking);
+        rejectButton.addEventListener('click', rejectBooking);
+        cancelApprovalButton.addEventListener('click', hideApprovalDetail);
         setDefaultTimes();
         listenersBound = true;
       }

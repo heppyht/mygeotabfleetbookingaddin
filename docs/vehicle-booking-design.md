@@ -6,20 +6,44 @@ Untuk kebutuhan awal dengan lima kendaraan, simpan booking menggunakan **MyGeota
 
 Add-in perlu melakukan operasi melalui MyGeotab API dan sesi pengguna yang sedang login. Jangan menyimpan username/password atau API key di HTML/JavaScript. Hak akses pengguna MyGeotab tetap berlaku.
 
-## Model data awal
+## Model data
 
-Simpan satu booking per `AddInData` record. Contoh isi `details`:
+Simpan satu booking per `AddInData` record. Contoh isi `details` untuk **booking request (pending)**:
 
 ```json
 {
   "bookingKey": "uuid",
-  "deviceId": "geotab-device-id",
+  "startUtc": "2026-11-12T08:00:00Z",
+  "endUtc": "2026-11-12T10:00:00Z",
+  "status": "pending",
+  "purpose": "customer visit",
+  "notes": "additional info",
+  "createdBy": "user-id",
+  "createdAtUtc": "2026-11-01T04:30:00Z",
+  "updatedAtUtc": "2026-11-01T04:30:00Z"
+}
+```
+
+Contoh isi `details` untuk **confirmed booking (after admin approval)**:
+
+```json
+{
+  "bookingKey": "uuid",
+  "assignedVehicleId": "geotab-device-id",
+  "assignedVehicleName": "Vehicle Name",
+  "assignedDriverId": "geotab-user-id",
+  "assignedDriverName": "Driver Name",
   "startUtc": "2026-11-12T08:00:00Z",
   "endUtc": "2026-11-12T10:00:00Z",
   "status": "confirmed",
-  "purpose": "",
+  "purpose": "customer visit",
+  "notes": "additional info",
+  "approvalNotes": "approved for client meeting",
   "createdBy": "user-id",
-  "createdAtUtc": "2026-11-01T04:30:00Z"
+  "createdAtUtc": "2026-11-01T04:30:00Z",
+  "approvedBy": "admin-user-id",
+  "approvedAt": "2026-11-01T05:00:00Z",
+  "updatedAtUtc": "2026-11-01T05:00:00Z"
 }
 ```
 
@@ -31,14 +55,24 @@ Satu record per booking lebih mudah dicari, diperbarui, dan dibatalkan dibanding
 
 - Simpan waktu sebagai ISO-8601 UTC; tampilkan dan inputkan waktu menurut zona waktu lokasi/customer.
 - Validasi `startUtc < endUtc`.
-- Anggap bentrok bila booking aktif untuk kendaraan yang sama memenuhi `newStart < existingEnd && newEnd > existingStart`.
+- **User booking form**: Users submit only date, time, purpose, and optional notes. **No vehicle or driver selection.**
+- **Administrator approval**: Only authorized administrators (security clearance: Administrator or Supervisor) can:
+  1. Review pending booking requests
+  2. Select an available vehicle from actual MyGeotab Device records
+  3. Select an eligible driver from actual MyGeotab User records (where `isDriver=true` and account is Active)
+  4. Validate vehicle and driver schedule conflicts
+  5. Approve or reject the booking
+- **Approval rule**: A booking can only become `confirmed` after **both** vehicle and driver have been assigned successfully.
+- Anggap bentrok bila booking aktif untuk kendaraan atau driver yang sama memenuhi `newStart < existingEnd && newEnd > existingStart`.
 - Saat add-in dibuka, muat ulang booking dari API; jangan menjadikan cache browser sebagai sumber kebenaran.
 - Periksa ulang bentrok sesaat sebelum membuat booking dan tampilkan error API dengan jelas.
 - Tentukan kebijakan siapa yang boleh membuat, membatalkan, atau melihat booking; `ViewOnly` hanya memiliki hak `Get` untuk Storage API menurut dokumentasi, sementara operasi tulis memerlukan clearance yang sesuai.
+- Validasi otorisasi administrator sebelum setiap operasi approval.
+- Revalidasi ketersediaan kendaraan dan driver segera sebelum menyimpan approval.
 
 ### Batasan konsistensi
 
-Pengecekan bentrok berbasis `Get`, lalu `Add` bukan transaksi atomik: dua pengguna yang memesan kendaraan dan waktu sama pada saat hampir bersamaan masih dapat lolos pemeriksaan sebelum keduanya menulis record. Dokumentasi Storage API menjelaskan operasi penyimpanan dan clearance, tetapi tidak mendokumentasikan constraint interval/unique atau transaksi untuk mengunci slot booking.
+Pengecekan bentrok berbasis `Get`, lalu `Add`/`Set` bukan transaksi atomik: dua pengguna yang memesan kendaraan dan waktu sama pada saat hampir bersamaan masih dapat lolos pemeriksaan sebelum keduanya menulis record. Dokumentasi Storage API menjelaskan operasi penyimpanan dan clearance, tetapi tidak mendokumentasikan constraint interval/unique atau transaksi untuk mengunci slot booking.
 
 Untuk lima kendaraan dengan risiko bentrok yang dapat ditangani secara operasional, Storage API cukup sebagai MVP, dengan pemeriksaan ulang dan prosedur pembatalan/admin. Jika bisnis mensyaratkan jaminan keras tidak mungkin double-book dalam kondisi multi-user serentak, gunakan backend dengan transaksi/constraint database atau konfirmasikan ke Geotab apakah ada mekanisme locking yang didukung sebelum implementasi. Jangan menjanjikan pencegahan race condition hanya dari UI.
 
@@ -46,7 +80,17 @@ Untuk lima kendaraan dengan risiko bentrok yang dapat ditangani secara operasion
 
 Implementasi berada pada `fleet-summary.html`, dengan styling di `booking.css` dan validasi/pemeriksaan interval di `booking-domain.js`. Konfigurasi add-in untuk URL hosting ada di `configuration.json`; instruksi setup dan tes ada di `README.md`.
 
-Daftar kendaraan dimuat langsung dari MyGeotab menggunakan `Get` untuk `Device` setiap kali add-in dimuat. Semua device yang dikembalikan API ditampilkan; device aktif dapat dipesan dan device nonaktif tetap terlihat tetapi dinonaktifkan di pilihan. Hasil tetap mengikuti hak akses akun pengguna. Sesuaikan URL hosting dan `supportEmail` pada konfigurasi. Halaman mendukung membuat, mengubah, dan membatalkan booking; pembatalan menyimpan status `cancelled` untuk riwayat. Pengguna hanya dapat mengubah atau membatalkan booking yang dibuat olehnya.
+Daftar kendaraan dimuat langsung dari MyGeotab menggunakan `Get` untuk `Device` setiap kali add-in dimuat. Semua device yang dikembalikan API ditampilkan; device aktif dapat dipesan dan device nonaktif tetap terlihat tetapi dinonaktifkan di pilihan. Hasil tetap mengikuti hak akses akun pengguna.
+
+Daftar driver memfilter `User` records di mana `isDriver=true` dan status akun Active. Administrator memilih dari daftar ini saat approval.
+
+Halaman mendukung:
+- **Booking tab**: User creates booking requests (pending status). User can edit/withdraw own pending requests.
+- **Approval tab**: Admin reviews pending requests, assigns vehicle/driver, approves/rejects.
+- **Reports tab**: Shows all statuses (pending, confirmed, cancelled, rejected) with filters.
+- **Users tab**: Read-only directory with driver status.
+
+Pengguna hanya dapat mengubah atau membatalkan booking request yang dibuat olehnya. Administrator memiliki otoritas penuh atas alokasi kendaraan dan driver.
 
 Tes unit domain dijalankan dengan `node --test tests/booking-domain.test.js`. Pengujian di tenant MyGeotab tetap diperlukan untuk memverifikasi izin `AddInData`, konfigurasi Add-In, zona waktu browser, dan skenario dua pengguna bersamaan.
 

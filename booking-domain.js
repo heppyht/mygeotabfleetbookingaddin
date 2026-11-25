@@ -28,7 +28,7 @@
     };
   }
 
-  function hasConflict(bookings, deviceId, startUtc, endUtc) {
+  function hasConflict(bookings, resourceId, startUtc, endUtc, resourceField) {
     var requestedStart = Date.parse(startUtc);
     var requestedEnd = Date.parse(endUtc);
     if (!Number.isFinite(requestedStart) || !Number.isFinite(requestedEnd) || requestedStart >= requestedEnd) {
@@ -37,16 +37,87 @@
 
     return bookings.some(function (booking) {
       var details = booking.details || {};
-      if (details.status !== 'confirmed' || details.deviceId !== deviceId) return false;
+      if (details.status !== 'confirmed' || details[resourceField] !== resourceId) return false;
 
       var existingStart = Date.parse(details.startUtc);
       var existingEnd = Date.parse(details.endUtc);
       if (!Number.isFinite(existingStart) || !Number.isFinite(existingEnd) || existingStart >= existingEnd) {
-        throw new Error('Stored booking time data is invalid for vehicle ' + deviceId + '.');
+        throw new Error('Stored booking time data is invalid for ' + resourceField + ' ' + resourceId + '.');
       }
 
       return requestedStart < existingEnd && requestedEnd > existingStart;
     });
+  }
+
+  function hasVehicleConflict(bookings, vehicleId, startUtc, endUtc) {
+    var requestedStart = Date.parse(startUtc);
+    var requestedEnd = Date.parse(endUtc);
+    if (!Number.isFinite(requestedStart) || !Number.isFinite(requestedEnd) || requestedStart >= requestedEnd) {
+      throw new Error('Invalid booking time range.');
+    }
+
+    return bookings.some(function (booking) {
+      var details = booking.details || {};
+      if (details.status !== 'confirmed') return false;
+      if (details.deviceId !== vehicleId && details.assignedVehicleId !== vehicleId) return false;
+
+      var existingStart = Date.parse(details.startUtc);
+      var existingEnd = Date.parse(details.endUtc);
+      if (!Number.isFinite(existingStart) || !Number.isFinite(existingEnd) || existingStart >= existingEnd) {
+        throw new Error('Stored booking time data is invalid for vehicle ' + vehicleId + '.');
+      }
+
+      return requestedStart < existingEnd && requestedEnd > existingStart;
+    });
+  }
+
+  function hasDriverConflict(bookings, driverId, startUtc, endUtc) {
+    var requestedStart = Date.parse(startUtc);
+    var requestedEnd = Date.parse(endUtc);
+    if (!Number.isFinite(requestedStart) || !Number.isFinite(requestedEnd) || requestedStart >= requestedEnd) {
+      throw new Error('Invalid booking time range.');
+    }
+
+    return bookings.some(function (booking) {
+      var details = booking.details || {};
+      if (details.status !== 'confirmed') return false;
+      if (details.assignedDriverId !== driverId) return false;
+
+      var existingStart = Date.parse(details.startUtc);
+      var existingEnd = Date.parse(details.endUtc);
+      if (!Number.isFinite(existingStart) || !Number.isFinite(existingEnd) || existingStart >= existingEnd) {
+        throw new Error('Stored booking time data is invalid for driver ' + driverId + '.');
+      }
+
+      return requestedStart < existingEnd && requestedEnd > existingStart;
+    });
+  }
+
+  function canApproveBooking(booking) {
+    var details = booking.details || {};
+    return Boolean(details.assignedVehicleId && details.assignedDriverId);
+  }
+
+  function isAdminUser(user) {
+    if (!user) return false;
+    var groups = Array.isArray(user.securityGroups) ? user.securityGroups : [];
+    var adminGroupIds = ['everythingsecurity', 'supervisorsecurity'];
+    return groups.some(function (group) {
+      var id = typeof group === 'string' ? group : (group && group.id);
+      return id && adminGroupIds.indexOf(id.toLowerCase().replace(/[^a-z]/g, '')) !== -1;
+    });
+  }
+
+  function validateApprovalFields(details) {
+    if (!details.assignedVehicleId) {
+      throw new Error('Vehicle must be assigned before approval.');
+    }
+    if (!details.assignedDriverId) {
+      throw new Error('Driver must be assigned before approval.');
+    }
+    if (!details.approvedBy) {
+      throw new Error('Approver information is required.');
+    }
   }
 
   function filterBookings(bookings, filters) {
@@ -71,9 +142,7 @@
     var requester = String(filters.requester || '').trim().toLowerCase();
     return bookings.filter(function (booking) {
       var details = booking.details || {};
-      var status = details.status === 'confirmed' || details.status === 'cancelled'
-        ? details.status
-        : 'unknown';
+      var status = details.status || 'unknown';
       if (filters.status && filters.status !== 'all' && status !== filters.status) return false;
 
       var deviceId = String(details.deviceId || details.deviceName || '');
@@ -106,7 +175,12 @@
   return {
     filterBookings: filterBookings,
     hasConflict: hasConflict,
+    hasVehicleConflict: hasVehicleConflict,
+    hasDriverConflict: hasDriverConflict,
     toLocalDateTimeInput: toLocalDateTimeInput,
-    toUtcInterval: toUtcInterval
+    toUtcInterval: toUtcInterval,
+    canApproveBooking: canApproveBooking,
+    isAdminUser: isAdminUser,
+    validateApprovalFields: validateApprovalFields
   };
 }));
